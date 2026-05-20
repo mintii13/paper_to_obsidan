@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
+//Test kodus here
 void main() {
   runApp(const PaperToObsidianApp());
 }
@@ -33,7 +34,10 @@ class PaperToObsidianApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none, // Bỏ viền cứng
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 14,
+          ),
         ),
       ),
       home: const MainScreen(),
@@ -311,9 +315,8 @@ ${_summaryCtrl.text}
     }
   }
   // =========================================================================
-  // KẾT THÚC PHẦN LOGIC 
+  // KẾT THÚC PHẦN LOGIC
   // =========================================================================
-
 
   // =========================================================================
   // BẮT ĐẦU PHẦN UI ĐÃ ĐƯỢC LÀM ĐẸP
@@ -376,21 +379,21 @@ ${_summaryCtrl.text}
                       ),
                     ),
                     const SizedBox(height: 24),
-                    
+
                     // Box hiển thị Status
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: isLoading 
-                            ? Colors.blue.shade50 
+                        color: isLoading
+                            ? Colors.blue.shade50
                             : Colors.grey.shade100,
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: isLoading 
-                              ? Colors.blue.shade200 
+                          color: isLoading
+                              ? Colors.blue.shade200
                               : Colors.transparent,
-                        )
+                        ),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -408,19 +411,30 @@ ${_summaryCtrl.text}
                             statusText,
                             style: TextStyle(
                               fontSize: 14,
-                              color: isLoading ? Colors.blue.shade700 : Colors.black87,
-                              fontWeight: isLoading ? FontWeight.w500 : FontWeight.normal,
+                              color: isLoading
+                                  ? Colors.blue.shade700
+                                  : Colors.black87,
+                              fontWeight: isLoading
+                                  ? FontWeight.w500
+                                  : FontWeight.normal,
                             ),
                           ),
                           if (isLoading) ...[
                             const SizedBox(height: 16),
-                            const LinearProgressIndicator(borderRadius: BorderRadius.all(Radius.circular(4))),
+                            const LinearProgressIndicator(
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(4),
+                              ),
+                            ),
                             const SizedBox(height: 16),
                             SizedBox(
                               width: double.infinity,
                               child: OutlinedButton.icon(
                                 onPressed: _cancelExtraction,
-                                icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                                icon: const Icon(
+                                  Icons.stop_circle_outlined,
+                                  size: 18,
+                                ),
                                 label: const Text('Cancel'),
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: Colors.red.shade400,
@@ -434,14 +448,17 @@ ${_summaryCtrl.text}
                     ),
 
                     const Spacer(),
-                    
+
                     // Nút Save nổi bật
                     FilledButton.icon(
                       onPressed: selectedPdf == null ? null : _saveToObsidian,
                       icon: const Icon(Icons.save_alt),
                       label: const Text(
                         'Save to Obsidian',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(double.infinity, 64),
@@ -455,9 +472,8 @@ ${_summaryCtrl.text}
                 ),
               ),
             ),
-            
-            const SizedBox(width: 20), // Khoảng cách giữa các cột
 
+            const SizedBox(width: 20), // Khoảng cách giữa các cột
             // ==========================================
             // CỘT 2: PDF PREVIEW (Xem trước tài liệu)
             // ==========================================
@@ -472,7 +488,11 @@ ${_summaryCtrl.text}
                       padding: const EdgeInsets.all(16.0),
                       child: Row(
                         children: [
-                          Icon(Icons.visibility, size: 20, color: Colors.grey.shade700),
+                          Icon(
+                            Icons.visibility,
+                            size: 20,
+                            color: Colors.grey.shade700,
+                          ),
                           const SizedBox(width: 8),
                           const Text(
                             'Document Preview',
@@ -492,11 +512,18 @@ ${_summaryCtrl.text}
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(Icons.find_in_page_outlined, size: 64, color: Colors.grey.shade300),
+                                  Icon(
+                                    Icons.find_in_page_outlined,
+                                    size: 64,
+                                    color: Colors.grey.shade300,
+                                  ),
                                   const SizedBox(height: 16),
                                   Text(
                                     'No PDF selected',
-                                    style: TextStyle(color: Colors.grey.shade500, fontSize: 16),
+                                    style: TextStyle(
+                                      color: Colors.grey.shade500,
+                                      fontSize: 16,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -520,7 +547,11 @@ ${_summaryCtrl.text}
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.auto_awesome, size: 20, color: Colors.purple.shade400),
+                        Icon(
+                          Icons.auto_awesome,
+                          size: 20,
+                          color: Colors.purple.shade400,
+                        ),
                         const SizedBox(width: 8),
                         const Text(
                           'AI Extracted Metadata',
@@ -540,16 +571,36 @@ ${_summaryCtrl.text}
                             _buildTextField('Authors', _authorsCtrl),
                             Row(
                               children: [
-                                Expanded(child: _buildTextField('Venue', _venueCtrl)),
+                                Expanded(
+                                  child: _buildTextField('Venue', _venueCtrl),
+                                ),
                                 const SizedBox(width: 12),
-                                Expanded(child: _buildTextField('Year', _yearCtrl)),
+                                Expanded(
+                                  child: _buildTextField('Year', _yearCtrl),
+                                ),
                               ],
                             ),
                             _buildTextField('Tags / Keywords', _keywordsCtrl),
-                            _buildTextField('Dataset', _datasetCtrl, maxLines: 2),
-                            _buildTextField('Problem Statement', _problemCtrl, maxLines: 3),
-                            _buildTextField('Limitations', _limitationCtrl, maxLines: 2),
-                            _buildTextField('Summary', _summaryCtrl, maxLines: 5),
+                            _buildTextField(
+                              'Dataset',
+                              _datasetCtrl,
+                              maxLines: 2,
+                            ),
+                            _buildTextField(
+                              'Problem Statement',
+                              _problemCtrl,
+                              maxLines: 3,
+                            ),
+                            _buildTextField(
+                              'Limitations',
+                              _limitationCtrl,
+                              maxLines: 2,
+                            ),
+                            _buildTextField(
+                              'Summary',
+                              _summaryCtrl,
+                              maxLines: 5,
+                            ),
                           ],
                         ),
                       ),
@@ -599,7 +650,8 @@ ${_summaryCtrl.text}
         decoration: InputDecoration(
           labelText: label,
           labelStyle: TextStyle(color: Colors.grey.shade600),
-          alignLabelWithHint: maxLines > 1, // Đẩy label lên trên cùng nếu là multiline
+          alignLabelWithHint:
+              maxLines > 1, // Đẩy label lên trên cùng nếu là multiline
         ),
       ),
     );
@@ -611,7 +663,10 @@ ${_summaryCtrl.text}
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Preferences', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Preferences',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         content: SizedBox(
           width: 400,
           child: Column(
