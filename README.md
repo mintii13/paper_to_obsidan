@@ -1,17 +1,38 @@
-# paper_to_obsidian
+# 📚 Paper2Obsidian: AI-Powered Research Manager
 
-A new Flutter project.
+A modern, local-first Flutter desktop application designed to streamline the workflow of organizing academic research papers into [Obsidian](https://obsidian.md/). 
 
-## Getting Started
+By leveraging Local AI (via Ollama), it automatically extracts critical metadata from PDFs and generates beautifully structured, Dataview-ready Markdown notes directly into your Obsidian Vault.
 
-This project is a starting point for a Flutter application.
+## ✨ Features
 
-A few resources to get you started if this is your first Flutter project:
+*   **Local-First Architecture:** Directly manipulates your local Obsidian file system. No cloud backend, zero subscription fees, and complete privacy for your research.
+*   **AI Metadata Extraction:** Automatically extracts Title, Authors, Venue, Year, Keywords, Datasets, and limits using LLMs (default configured for Ollama local models).
+*   **Human-in-the-Loop UI:** A clean, Material 3 dashboard to preview the PDF and review/edit the AI-extracted data before saving.
+*   **Obsidian Graph Ready:** Automatically structures metadata into internal links (e.g., `[[Authors/John Doe]]`, `[[Venues/CVPR]]`) to instantly populate your Obsidian Graph View.
+*   **Cross-Platform:** Built with Flutter, supporting Windows, macOS, and Linux desktop environments.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## 🚀 How It Works
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+1.  **Select:** Pick a research paper (PDF) from your computer.
+2.  **Extract:** The app reads the first page and sends the raw text to your configured AI API (Ollama).
+3.  **Review:** AI parses the text into a JSON object and populates the dashboard UI.
+4.  **Save:** Click "Save to Obsidian". The app will:
+    *   Copy the PDF to your Vault.
+    *   Generate a structured `.md` file with YAML Frontmatter.
+    *   Create metadata nodes (Authors, Tags, Venues) for Graph connections.
+
+
+## 🛠 Prerequisites
+
+To run or build this project, you will need:
+*   [Flutter SDK](https://docs.flutter.dev/get-started/install) (Desktop support enabled)
+*   [Obsidian](https://obsidian.md/) installed locally.
+*   [Ollama](https://ollama.ai/) installed and running locally (Default model: `qwen2.5:14b`, but you can change it in the code/settings).
+
+## 💻 Installation & Setup
+
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/mintii13/paper_to_obsidan.git](https://github.com/mintii13/paper_to_obsidan.git)
+   cd paper2obsidian
