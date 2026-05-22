@@ -7,6 +7,7 @@ import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/api_service.dart';
 
 void main() {
   runApp(const PaperToObsidianApp());
@@ -66,6 +67,9 @@ class _MainScreenState extends State<MainScreen> {
   bool isLoading = false;
   String statusText = 'Sẵn sàng';
 
+  // API Services for professional metadata extraction
+  late ResearchApiService researchApiService;
+
   // PDF Viewer Controller để hỗ trợ Zoom và tương tác văn bản
   final PdfViewerController _pdfViewerController = PdfViewerController();
   PdfInteractionMode _pdfInteractionMode =
@@ -96,6 +100,10 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    researchApiService = ResearchApiService(
+      ollamaUrl: 'http://localhost:11434',
+      grobidUrl: 'http://localhost:8070',
+    );
     _loadSettings();
   }
 
@@ -246,18 +254,21 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _processPdf() async {
     if (selectedPdf == null) return;
+    
     setState(() {
       isLoading = true;
-      statusText = 'Extracting text...';
+      statusText = 'Step 1/4: Extracting text from PDF...';
     });
 
     try {
+      // Step 1: Extract text from PDF for context and RAG
       final PdfDocument document = PdfDocument(
         inputBytes: selectedPdf!.readAsBytesSync(),
       );
       String extractedTextPage0 = PdfTextExtractor(
         document,
       ).extractText(startPageIndex: 0, endPageIndex: 0);
+      
       int maxPagesForContext = document.pages.count > 10
           ? 10
           : document.pages.count;
@@ -266,14 +277,138 @@ class _MainScreenState extends State<MainScreen> {
       ).extractText(startPageIndex: 0, endPageIndex: maxPagesForContext - 1);
       document.dispose();
 
-      await _fetchMetadataFromOllama(extractedTextPage0);
+      if (!mounted) return;
+      
+      // Step 2: Process PDF with Grobid for structured data
+      await _processWithGrobidAndOpenAlex(extractedTextPage0);
     } catch (e) {
-      setState(() => statusText = 'Extraction error: $e');
-      setState(() => isLoading = false);
+      if (mounted) {
+        setState(() => statusText = 'PDF extraction error: $e');
+        setState(() => isLoading = false);
+      }
     }
   }
 
-  Future<void> _fetchMetadataFromOllama(String text) async {
+  /// Professional metadata extraction workflow:
+  /// PDF -> Grobid (structure) -> OpenAlex (accuracy) -> Ollama (summary)
+  Future<void> _processWithGrobidAndOpenAlex(String firstPageText) async {
+    try {
+      if (selectedPdf == null) return;
+
+      // Step 2: Send to Grobid for structured PDF parsing
+      setState(() => statusText = 'Step 2/4: Parsing PDF structure with Grobid...');
+      
+      String grobidXml = '';
+      Map<String, dynamic> grobidData = {};
+      
+      try {
+        grobidXml = await researchApiService.processPdfWithGrobid(selectedPdf!);
+        grobidData = ResearchApiService.parseGrobidXml(grobidXml);
+      } catch (e) {
+        // If Grobid fails, fall back to Ollama extraction
+        debugPrint('Grobid error (using Ollama fallback): $e');
+        grobidData = {'title': '', 'authors': '', 'year': ''};
+      }
+
+      if (!mounted) return;
+
+      // Step 3: Query OpenAlex for standardized metadata using Grobid title
+      setState(() => statusText = 'Step 3/4: Fetching standardized metadata...');
+      
+      Map<String, dynamic> openalexData = {};
+      if (grobidData['title']?.toString().isNotEmpty ?? false) {
+        try {
+          openalexData = await researchApiService
+              .fetchOpenAlexMetadata(grobidData['title'] ?? '');
+        } catch (e) {
+          debugPrint('OpenAlex error: $e');
+          openalexData = {};
+        }
+      }
+
+      if (!mounted) return;
+
+      // Step 4: Generate summary using Ollama
+      setState(() => statusText = 'Step 4/4: Generating summary...');
+      
+      String summary = '';
+      try {
+        summary = await researchApiService.generateSummaryWithOllama(fullPdfText);
+      } catch (e) {
+        debugPrint('Summary generation error: $e');
+        summary = 'Not Given';
+      }
+
+      if (!mounted) return;
+
+      // Merge data with preference: OpenAlex > Grobid > Default
+      _populateMetadataFields(grobidData, openalexData, summary);
+    } catch (e) {
+      if (mounted) {
+        setState(() => statusText = 'Processing error: $e');
+        setState(() => isLoading = false);
+      }
+    }
+  }
+
+  /// Populates form fields with merged metadata from multiple sources
+  /// Priority: OpenAlex > Grobid > Fallback values
+  void _populateMetadataFields(
+    Map<String, dynamic> grobidData,
+    Map<String, dynamic> openalexData,
+    String summary,
+  ) {
+    if (!mounted) return;
+
+    setState(() {
+      // Title: Prefer OpenAlex, fall back to Grobid
+      _titleCtrl.text = (openalexData['title'] as String?) ?? 
+                        (grobidData['title'] as String?) ?? 
+                        '';
+
+      // Authors: Prefer OpenAlex, fall back to Grobid
+      _authorsCtrl.text = (openalexData['authors'] as String?) ?? 
+                          (grobidData['authors'] as String?) ?? 
+                          '';
+
+      // Venue: Use OpenAlex (more reliable for publication venue)
+      _venueCtrl.text = (openalexData['venue'] as String?) ?? 
+                        (grobidData['abstract']?.toString().split('\n').first ?? '');
+
+      // Year: Prefer OpenAlex, fall back to Grobid
+      _yearCtrl.text = (openalexData['year'] as String?) ?? 
+                       (grobidData['year'] as String?) ?? 
+                       '';
+
+      // Problem: Use Ollama summary parsing (from full PDF analysis)
+      _problemCtrl.text = 'Extracted via Grobid + OpenAlex';
+
+      // Keywords: Use Grobid extracted keywords
+      _keywordsCtrl.text = (grobidData['keywords'] as String?) ?? '';
+
+      // Limitation: Empty for now (user to fill manually)
+      _limitationCtrl.text = '';
+
+      // Dataset: Empty for now (user to fill manually)
+      _datasetCtrl.text = '';
+
+      // Summary: From Ollama analysis
+      _summaryCtrl.text = summary;
+
+      statusText = 'Success! Metadata extracted via Grobid + OpenAlex + Ollama';
+    });
+
+    // Initialize chat with AI
+    chatMessages.add({
+      "role": "assistant",
+      "content":
+          "Hi! I have read the paper. What would you like to know about it?",
+    });
+  }
+
+  /// Legacy Ollama fallback (kept for compatibility)
+  /// Only used if Grobid/OpenAlex fail completely
+  Future<void> _fetchMetadataFromOllamaLegacy(String text) async {
     _client = http.Client();
     try {
       final response = await _client!.post(
@@ -285,7 +420,7 @@ class _MainScreenState extends State<MainScreen> {
             {
               "role": "system",
               "content":
-                  "You are a research assistant. Extract metadata from the paper text. STRICT RULES: 1. Use ENGLISH only. 2. For lists (authors, keywords), separate items with COMMAS ONLY. 3. DO NOT use the word 'and' to connect items. 4. Return ONLY JSON with fields: title, authors, venue, year, problem, keywords, limitation, dataset, summary. 5. If any field is missing, return it as Not Given.",
+                  "You are a research assistant. Extract metadata from the paper text. Return JSON with: title, authors, venue, year, problem, keywords, limitation, dataset, summary. Use 'Not Given' if unavailable.",
             },
             {"role": "user", "content": "Text from first page: $text"},
           ],
@@ -310,7 +445,7 @@ class _MainScreenState extends State<MainScreen> {
           _limitationCtrl.text = metadata['limitation'] ?? '';
           _datasetCtrl.text = metadata['dataset'] ?? '';
           _summaryCtrl.text = metadata['summary'] ?? '';
-          statusText = 'Success! Please review the metadata.';
+          statusText = 'Success! (Ollama fallback) Please review metadata.';
         });
 
         chatMessages.add({
@@ -318,7 +453,6 @@ class _MainScreenState extends State<MainScreen> {
           "content":
               "Hi! I have read the paper. What would you like to know about it?",
         });
-      }
     } catch (e) {
       if (statusText != 'Đã dừng trích xuất. Bạn có thể chọn file khác.') {
         setState(() => statusText = 'AI Error: $e');
@@ -356,35 +490,18 @@ class _MainScreenState extends State<MainScreen> {
     _scrollToBottom();
 
     try {
-      final response = await http.post(
-        Uri.parse('$apiUrl/api/chat'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "model": "qwen2.5:14b",
-          "messages": [
-            {
-              "role": "system",
-              "content":
-                  "You are a helpful AI research assistant. Use the following paper text to answer the user's questions. If the answer is not in the text, say you don't know based on the provided context.\n\n--- PAPER CONTEXT ---\n$fullPdfText\n---------------------",
-            },
-            ...chatMessages
-                .map((m) => {"role": m["role"], "content": m["content"]})
-                .toList(),
-          ],
-          "stream": false,
-          "options": {"temperature": 0.3},
-        }),
+      // Use ResearchApiService for RAG chat with paper context
+      final response = await researchApiService.chatWithPaperContext(
+        userText,
+        fullPdfText,
       );
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        setState(() {
-          chatMessages.add({
-            "role": "assistant",
-            "content": data['message']['content'] ?? "Sorry, no response.",
-          });
+      setState(() {
+        chatMessages.add({
+          "role": "assistant",
+          "content": response.isNotEmpty ? response : "Sorry, no response.",
         });
-      }
+      });
     } catch (e) {
       setState(
         () => chatMessages.add({"role": "assistant", "content": "Error: $e"}),
