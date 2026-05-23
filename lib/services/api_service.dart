@@ -356,7 +356,36 @@ class ResearchApiService {
           .findAllElements('imprint')
           .expand((e) => e.findAllElements('date'))
           .firstOrNull;
-      year = dateElement?.getAttribute('when') ?? '';
+      // Extract citations
+      final biblStructElements = root.findAllElements('biblStruct').toList();
+      final citationsList = <String>[];
+      for (var bibl in biblStructElements) {
+        final analyticTitle = bibl.findElements('analytic').expand((e) => e.findElements('title')).firstOrNull?.text;
+        final monogrTitle = bibl.findElements('monogr').expand((e) => e.findElements('title')).firstOrNull?.text;
+        final citeTitle = analyticTitle ?? monogrTitle ?? '';
+        
+        // Skip if this citation title matches the main paper title
+        if (citeTitle.isNotEmpty && title.isNotEmpty) {
+          final citeLower = citeTitle.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+          final mainLower = title.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+          if (citeLower == mainLower || citeLower.contains(mainLower) || mainLower.contains(citeLower)) {
+            continue;
+          }
+        }
+        
+        final authorsList = <String>[];
+        final authorsNodes = bibl.findAllElements('author');
+        for (var author in authorsNodes) {
+          final surname = author.findAllElements('surname').firstOrNull?.text ?? '';
+          if (surname.isNotEmpty) authorsList.add(surname);
+        }
+        
+        if (citeTitle.isNotEmpty) {
+          String cite = citeTitle;
+          if (authorsList.isNotEmpty) cite = '${authorsList.join(', ')} - $citeTitle';
+          citationsList.add(cite);
+        }
+      }
 
       return {
         'title': title.trim(),
@@ -364,6 +393,7 @@ class ResearchApiService {
         'abstract': abstract.isNotEmpty ? abstract : 'Not Given',
         'keywords': keywords.isNotEmpty ? keywords : 'Not Given',
         'year': year.isNotEmpty ? year : 'Not Given',
+        'citations': citationsList,
       };
     } catch (e) {
       return {
@@ -373,6 +403,7 @@ class ResearchApiService {
         'abstract': '',
         'keywords': '',
         'year': '',
+        'citations': <String>[],
       };
     }
   }

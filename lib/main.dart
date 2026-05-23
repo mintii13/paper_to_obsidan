@@ -83,6 +83,9 @@ class _MainScreenState extends State<MainScreen> {
   final _chatInputCtrl = TextEditingController();
   final ScrollController _chatScrollCtrl = ScrollController();
 
+  // Biến phục vụ Citations
+  List<String> paperCitations = [];
+
   // Biến phục vụ Vault Library
   List<Map<String, String>> libraryPapers = [];
   bool isLibraryLoading = false;
@@ -234,6 +237,7 @@ class _MainScreenState extends State<MainScreen> {
           _limitationCtrl.clear();
           _datasetCtrl.clear();
           _summaryCtrl.clear();
+          paperCitations.clear();
           
           // Simple parsing of YAML frontmatter if possible
           final doiMatch = RegExp(r'doi:\s*"(.*?)"').firstMatch(content);
@@ -409,6 +413,13 @@ class _MainScreenState extends State<MainScreen> {
       if (!mounted || _isCancelled) return;
 
       _populateMetadataFields(grobidData, openalexData, summary, extraData);
+      
+      if (grobidData['citations'] != null && grobidData['citations'] is List) {
+        setState(() {
+          paperCitations = List<String>.from(grobidData['citations']);
+        });
+      }
+
       _addLog('🎉 Success! All data extracted and merged.');
       
     } catch (e) {
@@ -879,6 +890,7 @@ ${_summaryCtrl.text}
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+
                     // THANH CÔNG CỤ PDF TOOLBAR (GIÚP ZOOM VÀ HOÀN TOÀN COPY ĐƯỢC CHỮ CHUYÊN NGHIỆP)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -1003,7 +1015,7 @@ ${_summaryCtrl.text}
             Expanded(
               flex: 4,
               child: DefaultTabController(
-                length: 3, // Cấu hình 3 Tab chuyên sâu
+                length: 4, // Cấu hình 4 Tab chuyên sâu
                 child: _buildPanel(
                   padding: EdgeInsets.zero,
                   child: Column(
@@ -1026,9 +1038,13 @@ ${_summaryCtrl.text}
                               text: "AI Chat",
                             ),
                             Tab(
+                              icon: Icon(Icons.format_quote, size: 18),
+                              text: "Citations",
+                            ),
+                            Tab(
                               icon: Icon(Icons.local_library, size: 18),
                               text: "Library",
-                            ), // Tab Library mới
+                            ),
                           ],
                         ),
                       ),
@@ -1206,6 +1222,31 @@ ${_summaryCtrl.text}
                                           ),
                                         ),
                                       const Divider(height: 1),
+                                      if (fullPdfText.isNotEmpty)
+                                        Padding(
+                                          padding: const EdgeInsets.only(left: 12, right: 12, top: 12),
+                                          child: SingleChildScrollView(
+                                            scrollDirection: Axis.horizontal,
+                                            child: Wrap(
+                                              spacing: 8,
+                                              children: [
+                                                'Bài này có điểm gì novelty?',
+                                                'Research gap là gì?',
+                                                'Limitation là gì?',
+                                              ].map((suggestion) {
+                                                return ActionChip(
+                                                  label: Text(suggestion, style: const TextStyle(fontSize: 12)),
+                                                  backgroundColor: primaryColor.withOpacity(0.05),
+                                                  side: BorderSide(color: primaryColor.withOpacity(0.2)),
+                                                  onPressed: () {
+                                                    _chatInputCtrl.text = suggestion;
+                                                    _sendChatMessage();
+                                                  },
+                                                );
+                                              }).toList(),
+                                            ),
+                                          ),
+                                        ),
                                       Padding(
                                         padding: const EdgeInsets.all(12.0),
                                         child: Row(
@@ -1257,7 +1298,72 @@ ${_summaryCtrl.text}
                                   ),
 
                             // --------------------------------------
-                            // TAB 3: VAULT LIBRARY SCREEN (MÀN HÌNH THƯ VIỆN)
+                            // TAB 3: CITATIONS SCREEN
+                            // --------------------------------------
+                            paperCitations.isEmpty
+                                ? Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.format_quote,
+                                          size: 48,
+                                          color: Colors.grey.shade300,
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Text(
+                                          'No citations extracted yet.',
+                                          style: TextStyle(
+                                            color: Colors.grey.shade500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.all(12.0),
+                                        child: Text(
+                                          'Extracted Citations (${paperCitations.length})',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                      const Divider(height: 1),
+                                      Expanded(
+                                        child: ListView.builder(
+                                          itemCount: paperCitations.length,
+                                          itemBuilder: (context, index) {
+                                            return ListTile(
+                                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                              leading: CircleAvatar(
+                                                radius: 14,
+                                                backgroundColor: primaryColor.withOpacity(0.1),
+                                                child: Text(
+                                                  '${index + 1}',
+                                                  style: TextStyle(fontSize: 10, color: primaryColor, fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                              title: Text(
+                                                paperCitations[index],
+                                                style: const TextStyle(
+                                                  fontSize: 13,
+                                                  height: 1.4,
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+
+                            // --------------------------------------
+                            // TAB 4: VAULT LIBRARY SCREEN (MÀN HÌNH THƯ VIỆN)
                             // --------------------------------------
                             isLibraryLoading
                                 ? Center(
