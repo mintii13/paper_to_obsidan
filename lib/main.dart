@@ -87,16 +87,28 @@ class _MainScreenState extends State<MainScreen> {
   List<Map<String, String>> libraryPapers = [];
   bool isLibraryLoading = false;
 
+  // Thêm biến chứa lịch sử log
+  List<String> progressLogs = [];
+
   // Controllers cho form Metadata
   final _titleCtrl = TextEditingController();
   final _authorsCtrl = TextEditingController();
   final _venueCtrl = TextEditingController();
   final _yearCtrl = TextEditingController();
+  final _doiCtrl = TextEditingController(); // <-- THÊM DÒNG NÀY
   final _problemCtrl = TextEditingController();
   final _keywordsCtrl = TextEditingController();
   final _limitationCtrl = TextEditingController();
   final _datasetCtrl = TextEditingController();
   final _summaryCtrl = TextEditingController();
+
+  void _addLog(String message) {
+    if (!mounted) return;
+    setState(() {
+      progressLogs.add(message);
+      statusText = message; // Giữ lại biến này để đổi màu box (xanh/đỏ)
+    });
+  }
 
   @override
   void initState() {
@@ -174,7 +186,8 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _openPaperFromLibrary(String mdPath) async {
     setState(() {
       isLoading = true;
-      statusText = 'Loading paper from library...';
+      progressLogs.clear();
+      _addLog('📂 Loading paper from library: ${p.basename(mdPath)}');
       chatMessages.clear();
     });
 
@@ -197,7 +210,7 @@ class _MainScreenState extends State<MainScreen> {
         if (await pdfFile.exists()) {
           setState(() {
             selectedPdf = pdfFile;
-            statusText = 'Viewing: ${p.basename(pdfFile.path)}';
+            _addLog('✅ PDF found: ${p.basename(pdfFile.path)}');
           });
 
           // Trích xuất lại văn bản để phục vụ Chat RAG
@@ -210,27 +223,38 @@ class _MainScreenState extends State<MainScreen> {
           ).extractText(startPageIndex: 0, endPageIndex: maxPages - 1);
           document.dispose();
 
-          // Đổ dữ liệu cũ vào các ô Form để xem/chỉnh sửa nếu muốn
+          // Reset metadata fields to avoid lingering data
           _titleCtrl.text = p.basenameWithoutExtension(mdPath);
+          _authorsCtrl.clear();
+          _venueCtrl.clear();
+          _yearCtrl.clear();
+          _doiCtrl.clear();
+          _problemCtrl.clear();
+          _keywordsCtrl.clear();
+          _limitationCtrl.clear();
+          _datasetCtrl.clear();
+          _summaryCtrl.clear();
+          
+          // Simple parsing of YAML frontmatter if possible
+          final doiMatch = RegExp(r'doi:\s*"(.*?)"').firstMatch(content);
+          if (doiMatch != null) _doiCtrl.text = doiMatch.group(1) ?? '';
+          
+          final summaryMatch = RegExp(r'## 1\. Summary\n([\s\S]*?)\n## 2\.').firstMatch(content);
+          if (summaryMatch != null) _summaryCtrl.text = summaryMatch.group(1)?.trim() ?? '';
+
           chatMessages.add({
             "role": "assistant",
             "content":
                 "I loaded this paper from your library vault. You can now read it or ask me questions about it!",
           });
         } else {
-          setState(
-            () => statusText =
-                'Error: Original PDF file not found at $decodedPdfPath',
-          );
+          _addLog('❌ Error: Original PDF file not found at $decodedPdfPath');
         }
       } else {
-        setState(
-          () => statusText =
-              'Error: Cannot extract PDF path from markdown metadata.',
-        );
+        _addLog('❌ Error: Cannot extract PDF path from markdown metadata.');
       }
     } catch (e) {
-      setState(() => statusText = 'Error loading library paper: $e');
+      _addLog('❌ Error loading library paper: $e');
     } finally {
       setState(() => isLoading = false);
     }
@@ -261,11 +285,12 @@ class _MainScreenState extends State<MainScreen> {
     
     setState(() {
       isLoading = true;
-      statusText = 'Step 1/4: Extracting text from PDF...';
+      progressLogs.clear(); // Xóa log cũ
     });
+    
+    _addLog('⏳ Step 1/4: Extracting text from PDF...');
 
     try {
-      // Step 1: Extract text from PDF for context and RAG
       final PdfDocument document = PdfDocument(
         inputBytes: selectedPdf!.readAsBytesSync(),
       );
@@ -273,93 +298,125 @@ class _MainScreenState extends State<MainScreen> {
         document,
       ).extractText(startPageIndex: 0, endPageIndex: 0);
       
-      int maxPagesForContext = document.pages.count > 10
-          ? 10
-          : document.pages.count;
+      int maxPagesForContext = document.pages.count > 10 ? 10 : document.pages.count;
       fullPdfText = PdfTextExtractor(
         document,
       ).extractText(startPageIndex: 0, endPageIndex: maxPagesForContext - 1);
       document.dispose();
 
+      _addLog('✅ Text extracted (${fullPdfText.length} chars).');
+
       if (!mounted) return;
-      
-      // Step 2: Process PDF with Grobid for structured data
       await _processWithGrobidAndOpenAlex(extractedTextPage0);
     } catch (e) {
       if (mounted) {
-        setState(() => statusText = 'PDF extraction error: $e');
+        _addLog('❌ PDF extraction error: $e');
         setState(() => isLoading = false);
       }
     }
   }
 
-  /// Professional metadata extraction workflow:
-  /// PDF -> Grobid (structure) -> OpenAlex (accuracy) -> Ollama (summary)
   Future<void> _processWithGrobidAndOpenAlex(String firstPageText) async {
     try {
       if (selectedPdf == null) return;
-      _isCancelled = false;  // Reset cancel flag
+      _isCancelled = false; 
 
-      // Step 2: Send to Grobid for structured PDF parsing
-      setState(() => statusText = 'Step 2/4: Parsing PDF structure with Grobid...');
-      
+      // --- STEP 2: GROBID ---
+      _addLog('⏳ Step 2/4: Parsing structure with Grobid...');
       String grobidXml = '';
       Map<String, dynamic> grobidData = {};
       
       try {
-        print('[DEBUG] Calling Grobid at ${researchApiService.grobidUrl}...');
         grobidXml = await researchApiService.processPdfWithGrobid(selectedPdf!);
         grobidData = ResearchApiService.parseGrobidXml(grobidXml);
-        print('[DEBUG] Grobid success: title=${grobidData['title']}');
+        
+        String foundTitle = grobidData['title'] ?? '';
+        if (foundTitle.isNotEmpty) {
+          _addLog('✅ Grobid success: Found Title & ${grobidData['authors'].toString().split(';').length} authors.');
+        } else {
+          _addLog('⚠️ Grobid parsed but title is empty.');
+        }
       } catch (e) {
-        // If Grobid fails, fall back to Ollama extraction
-        print('[DEBUG] Grobid error (using Ollama fallback): $e');
-        setState(() => statusText = '$statusText\n⚠️ Grobid error: $e (using fallback)');
+        _addLog('⚠️ Grobid failed, using fallback mode.');
         grobidData = {'title': '', 'authors': '', 'year': ''};
       }
 
       if (!mounted || _isCancelled) return;
 
-      // Step 3: Query OpenAlex for standardized metadata using Grobid title
-      setState(() => statusText = '$statusText\nStep 3/4: Fetching standardized metadata...');
-      
+      // --- STEP 3: OPENALEX ---
+      _addLog('⏳ Step 3/4: Fetching precise OpenAlex metadata...');
       Map<String, dynamic> openalexData = {};
       if (grobidData['title']?.toString().isNotEmpty ?? false) {
         try {
-          print('[DEBUG] Calling OpenAlex with title: ${grobidData['title']}');
-          openalexData = await researchApiService
-              .fetchOpenAlexMetadata(grobidData['title'] ?? '');
-          print('[DEBUG] OpenAlex success: doi=${openalexData['doi']}');
+          openalexData = await researchApiService.fetchOpenAlexMetadata(grobidData['title'] ?? '');
+          if (openalexData.isNotEmpty && openalexData['doi'] != null) {
+            _addLog('✅ OpenAlex success: Found DOI (${openalexData['doi']}) and Venue.');
+          } else {
+            _addLog('⚠️ OpenAlex: No exact match found online.');
+          }
         } catch (e) {
-          print('[DEBUG] OpenAlex error: $e');
-          setState(() => statusText = '$statusText\n⚠️ OpenAlex error: $e');
+          _addLog('⚠️ OpenAlex error, continuing without online verification.');
           openalexData = {};
         }
+      } else {
+         _addLog('⏩ Skipped OpenAlex (No title from Grobid).');
       }
 
       if (!mounted || _isCancelled) return;
 
-      // Step 4: Generate summary using Ollama
-      setState(() => statusText = '$statusText\nStep 4/4: Generating summary...');
-      
-      String summary = '';
+      // --- STEP 4: OLLAMA ---
+      _addLog('⏳ Step 4/4: Extracting detailed metadata with Ollama...');
+      String summary = 'Not Given';
+      Map<String, dynamic> extraData = {};
       try {
-        print('[DEBUG] Calling Ollama at ${researchApiService.ollamaUrl}...');
-        summary = await researchApiService.generateSummaryWithOllama(fullPdfText);
-        print('[DEBUG] Ollama success: summary length=${summary.length}');
+        final client = http.Client();
+        final String remoteOllamaUrl = 'http://109.237.69.169';
+        final String basicAuth = 'Basic ' + base64Encode(utf8.encode('mtn_ai:130205'));
+        
+        final response = await client.post(
+          Uri.parse('$remoteOllamaUrl/api/chat'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': basicAuth,
+          },
+          body: jsonEncode({
+            "model": "qwen2.5:14b",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are a research assistant. Extract metadata from the paper text. Return ONLY JSON with: 'dataset' (just list the name of datasets (like MVTec-AD, VisA) comma-separated, no 'and'), 'problem_statement', 'limitation', 'keywords' (comma-separated, no 'and'), 'summary'. Use 'Not Given' if unavailable."
+              },
+              {"role": "user", "content": "Text from paper: ${fullPdfText.substring(0, fullPdfText.length > 8000 ? 8000 : fullPdfText.length)}"}
+            ],
+            "format": "json",
+            "stream": false,
+            "options": {"temperature": 0.1},
+          }),
+        );
+        if (response.statusCode == 200) {
+          final data = jsonDecode(utf8.decode(response.bodyBytes));
+          extraData = jsonDecode(data['message']['content']);
+          summary = extraData['summary'] ?? 'Not Given';
+          _addLog('✅ Ollama success: Extracted extra details.');
+        } else {
+          _addLog('⚠️ Ollama error: Status ${response.statusCode}');
+        }
+        client.close();
       } catch (e) {
-        print('[DEBUG] Summary generation error: $e');
-        setState(() => statusText = '$statusText\n⚠️ Ollama error: $e');
-        summary = 'Not Given';
+        _addLog('⚠️ Ollama error: $e');
       }
 
       if (!mounted || _isCancelled) return;
 
-      // Merge data with preference: OpenAlex > Grobid > Default
-      _populateMetadataFields(grobidData, openalexData, summary);
+      _populateMetadataFields(grobidData, openalexData, summary, extraData);
+      _addLog('🎉 Success! All data extracted and merged.');
+      
     } catch (e) {
       if (mounted) {
-        setState(() => statusText = 'Processing error: $e');
+        _addLog('❌ Processing error: $e');
+      }
+    } finally {
+      if (mounted) {
         setState(() => isLoading = false);
       }
     }
@@ -371,45 +428,22 @@ class _MainScreenState extends State<MainScreen> {
     Map<String, dynamic> grobidData,
     Map<String, dynamic> openalexData,
     String summary,
+    Map<String, dynamic> extraData,
   ) {
     if (!mounted) return;
 
     setState(() {
-      // Title: Prefer OpenAlex, fall back to Grobid
-      _titleCtrl.text = (openalexData['title'] as String?) ?? 
-                        (grobidData['title'] as String?) ?? 
-                        '';
-
-      // Authors: Prefer OpenAlex, fall back to Grobid
-      _authorsCtrl.text = (openalexData['authors'] as String?) ?? 
-                          (grobidData['authors'] as String?) ?? 
-                          '';
-
-      // Venue: Use OpenAlex (more reliable for publication venue)
-      _venueCtrl.text = (openalexData['venue'] as String?) ?? 
-                        (grobidData['abstract']?.toString().split('\n').first ?? '');
-
-      // Year: Prefer OpenAlex, fall back to Grobid
-      _yearCtrl.text = (openalexData['year'] as String?) ?? 
-                       (grobidData['year'] as String?) ?? 
-                       '';
-
-      // Problem: Use Ollama summary parsing (from full PDF analysis)
-      _problemCtrl.text = 'Extracted via Grobid + OpenAlex';
-
-      // Keywords: Use Grobid extracted keywords
-      _keywordsCtrl.text = (grobidData['keywords'] as String?) ?? '';
-
-      // Limitation: Empty for now (user to fill manually)
-      _limitationCtrl.text = '';
-
-      // Dataset: Empty for now (user to fill manually)
-      _datasetCtrl.text = '';
-
-      // Summary: From Ollama analysis
+      _titleCtrl.text = (openalexData['title'] as String?) ?? (grobidData['title'] as String?) ?? '';
+      _authorsCtrl.text = (openalexData['authors'] as String?) ?? (grobidData['authors'] as String?) ?? '';
+      _venueCtrl.text = (openalexData['venue'] as String?) ?? (grobidData['abstract']?.toString().split('\n').first ?? '');
+      _yearCtrl.text = (openalexData['year'] as String?) ?? (grobidData['year'] as String?) ?? '';
+      _doiCtrl.text = (openalexData['doi'] as String?) ?? ''; // <-- ĐỔ DỮ LIỆU DOI
+      
+      _problemCtrl.text = extraData['problem_statement']?.toString().isNotEmpty == true && extraData['problem_statement'] != 'Not Given' ? extraData['problem_statement'] : 'Not Given';
+      _keywordsCtrl.text = extraData['keywords']?.toString().isNotEmpty == true && extraData['keywords'] != 'Not Given' ? extraData['keywords'] : ((grobidData['keywords'] as String?) ?? 'Not Given');
+      _limitationCtrl.text = extraData['limitation']?.toString().isNotEmpty == true && extraData['limitation'] != 'Not Given' ? extraData['limitation'] : 'Not Given';
+      _datasetCtrl.text = extraData['dataset']?.toString().isNotEmpty == true && extraData['dataset'] != 'Not Given' ? extraData['dataset'] : 'Not Given';
       _summaryCtrl.text = summary;
-
-      statusText = 'Success! Metadata extracted via Grobid + OpenAlex + Ollama';
     });
 
     // Initialize chat with AI
@@ -603,6 +637,7 @@ title: "${_titleCtrl.text.replaceAll('"', '\\"')}"
 authors:${formatYamlList(_authorsCtrl.text, "Authors")}
 venue: "[[Venues/${_venueCtrl.text}]]"
 year: "[[Years/${_yearCtrl.text}]]"
+doi: "${_doiCtrl.text}"
 keywords:${formatYamlList(_keywordsCtrl.text, "Tags")}
 ---
 # ${_titleCtrl.text}
@@ -616,6 +651,7 @@ ${_summaryCtrl.text}
 - **Authors:** ${formatDisplayLinks(_authorsCtrl.text, "Authors")}
 - **Year:** [[Years/${_yearCtrl.text}]]
 - **Venue:** [[Venues/${_venueCtrl.text}]]
+- **DOI:** ${_doiCtrl.text}
 - **Datasets:** ${formatDisplayLinks(_datasetCtrl.text, "Datasets")}
 - **Keywords:** ${formatDisplayLinks(_keywordsCtrl.text, "Tags")}
 
@@ -720,109 +756,92 @@ ${_summaryCtrl.text}
                       ),
                     ),
                     const SizedBox(height: 24),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: isSuccess
-                            ? Colors.green.shade50
-                            : (isError
-                                  ? Colors.red.shade50
-                                  : (isLoading
-                                        ? primaryColor.withOpacity(0.05)
-                                        : Colors.grey.shade100)),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
+                    Expanded(
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
                           color: isSuccess
-                              ? Colors.green.shade200
+                              ? Colors.green.shade50
                               : (isError
-                                    ? Colors.red.shade200
+                                    ? Colors.red.shade50
                                     : (isLoading
-                                          ? primaryColor.withOpacity(0.3)
-                                          : Colors.transparent)),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Status',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey.shade600,
-                            ),
+                                          ? primaryColor.withOpacity(0.05)
+                                          : Colors.grey.shade100)),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isSuccess
+                                ? Colors.green.shade200
+                                : (isError
+                                      ? Colors.red.shade200
+                                      : (isLoading
+                                            ? primaryColor.withOpacity(0.3)
+                                            : Colors.transparent)),
                           ),
-                          const SizedBox(height: 8),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (isSuccess) ...[
-                                const Icon(
-                                  Icons.check_circle,
-                                  color: Colors.green,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 6),
-                              ],
-                              if (isError) ...[
-                                const Icon(
-                                  Icons.error,
-                                  color: Colors.red,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 6),
-                              ],
-                              Expanded(
-                                child: Text(
-                                  statusText,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: isSuccess
-                                        ? Colors.green.shade700
-                                        : (isError
-                                              ? Colors.red.shade700
-                                              : (isLoading
-                                                    ? primaryColor
-                                                    : Colors.black87)),
-                                    fontWeight:
-                                        (isLoading || isSuccess || isError)
-                                        ? FontWeight.w600
-                                        : FontWeight.normal,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Extraction Progress',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Expanded(
+                              child: ListView.builder(
+                                itemCount: progressLogs.length,
+                                itemBuilder: (context, index) {
+                                  final log = progressLogs[index];
+                                  Color textColor = Colors.black87;
+                                  if (log.startsWith('✅') || log.startsWith('🎉')) textColor = Colors.green.shade700;
+                                  if (log.startsWith('⚠️')) textColor = Colors.orange.shade800;
+                                  if (log.startsWith('❌')) textColor = Colors.red.shade700;
+                                  if (log.startsWith('⏳')) textColor = primaryColor;
+
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: Text(
+                                      log,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                        color: textColor,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            if (isLoading) ...[
+                              const SizedBox(height: 12),
+                              LinearProgressIndicator(
+                                borderRadius: BorderRadius.circular(4),
+                                color: primaryColor,
+                                backgroundColor: primaryColor.withOpacity(0.1),
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: _cancelExtraction,
+                                  icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                                  label: const Text('Cancel'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.red.shade500,
+                                    side: BorderSide(color: Colors.red.shade200),
                                   ),
                                 ),
                               ),
-                            ],
-                          ),
-                          if (isLoading) ...[
-                            const SizedBox(height: 16),
-                            LinearProgressIndicator(
-                              borderRadius: const BorderRadius.all(
-                                Radius.circular(4),
-                              ),
-                              color: primaryColor,
-                            ),
-                            const SizedBox(height: 16),
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                onPressed: _cancelExtraction,
-                                icon: const Icon(
-                                  Icons.stop_circle_outlined,
-                                  size: 18,
-                                ),
-                                label: const Text('Cancel'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.red.shade500,
-                                  side: BorderSide(color: Colors.red.shade200),
-                                ),
-                              ),
-                            ),
+                            ]
                           ],
-                        ],
+                        ),
                       ),
                     ),
-                    const Spacer(),
+                    const SizedBox(height: 16),
                     FilledButton.icon(
                       onPressed: (selectedPdf == null || isLoading)
                           ? null
@@ -1034,23 +1053,20 @@ ${_summaryCtrl.text}
                                     _authorsCtrl,
                                     maxLines: 3,
                                   ),
+                                  _buildTextField(
+                                    'Venue',
+                                    _venueCtrl,
+                                    maxLines: 2,
+                                  ),
                                   Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Expanded(
-                                        child: _buildTextField(
-                                          'Venue',
-                                          _venueCtrl,
-                                          maxLines: 2,
-                                        ),
+                                        child: _buildTextField('Year', _yearCtrl),
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
-                                        child: _buildTextField(
-                                          'Year',
-                                          _yearCtrl,
-                                        ),
+                                        child: _buildTextField('DOI', _doiCtrl),
                                       ),
                                     ],
                                   ),
