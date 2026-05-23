@@ -65,6 +65,7 @@ class _MainScreenState extends State<MainScreen> {
   http.Client? _client;
   File? selectedPdf;
   bool isLoading = false;
+  bool _isCancelled = false;  // Flag to cancel async operations
   String statusText = 'Sẵn sàng';
 
   // API Services for professional metadata extraction
@@ -100,9 +101,12 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    // Initialize with remote Ollama server + local Grobid
     researchApiService = ResearchApiService(
-      ollamaUrl: 'http://localhost:11434',
-      grobidUrl: 'http://localhost:8070',
+      ollamaUrl: 'http://109.237.69.169',      // Remote Ollama
+      ollamaUsername: 'mtn_ai',
+      ollamaPassword: '130205',
+      grobidUrl: 'http://localhost:8070',      // Local Grobid
     );
     _loadSettings();
   }
@@ -294,6 +298,7 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _processWithGrobidAndOpenAlex(String firstPageText) async {
     try {
       if (selectedPdf == null) return;
+      _isCancelled = false;  // Reset cancel flag
 
       // Step 2: Send to Grobid for structured PDF parsing
       setState(() => statusText = 'Step 2/4: Parsing PDF structure with Grobid...');
@@ -302,44 +307,53 @@ class _MainScreenState extends State<MainScreen> {
       Map<String, dynamic> grobidData = {};
       
       try {
+        print('[DEBUG] Calling Grobid at ${researchApiService.grobidUrl}...');
         grobidXml = await researchApiService.processPdfWithGrobid(selectedPdf!);
         grobidData = ResearchApiService.parseGrobidXml(grobidXml);
+        print('[DEBUG] Grobid success: title=${grobidData['title']}');
       } catch (e) {
         // If Grobid fails, fall back to Ollama extraction
-        debugPrint('Grobid error (using Ollama fallback): $e');
+        print('[DEBUG] Grobid error (using Ollama fallback): $e');
+        setState(() => statusText = '$statusText\n⚠️ Grobid error: $e (using fallback)');
         grobidData = {'title': '', 'authors': '', 'year': ''};
       }
 
-      if (!mounted) return;
+      if (!mounted || _isCancelled) return;
 
       // Step 3: Query OpenAlex for standardized metadata using Grobid title
-      setState(() => statusText = 'Step 3/4: Fetching standardized metadata...');
+      setState(() => statusText = '$statusText\nStep 3/4: Fetching standardized metadata...');
       
       Map<String, dynamic> openalexData = {};
       if (grobidData['title']?.toString().isNotEmpty ?? false) {
         try {
+          print('[DEBUG] Calling OpenAlex with title: ${grobidData['title']}');
           openalexData = await researchApiService
               .fetchOpenAlexMetadata(grobidData['title'] ?? '');
+          print('[DEBUG] OpenAlex success: doi=${openalexData['doi']}');
         } catch (e) {
-          debugPrint('OpenAlex error: $e');
+          print('[DEBUG] OpenAlex error: $e');
+          setState(() => statusText = '$statusText\n⚠️ OpenAlex error: $e');
           openalexData = {};
         }
       }
 
-      if (!mounted) return;
+      if (!mounted || _isCancelled) return;
 
       // Step 4: Generate summary using Ollama
-      setState(() => statusText = 'Step 4/4: Generating summary...');
+      setState(() => statusText = '$statusText\nStep 4/4: Generating summary...');
       
       String summary = '';
       try {
+        print('[DEBUG] Calling Ollama at ${researchApiService.ollamaUrl}...');
         summary = await researchApiService.generateSummaryWithOllama(fullPdfText);
+        print('[DEBUG] Ollama success: summary length=${summary.length}');
       } catch (e) {
-        debugPrint('Summary generation error: $e');
+        print('[DEBUG] Summary generation error: $e');
+        setState(() => statusText = '$statusText\n⚠️ Ollama error: $e');
         summary = 'Not Given';
       }
 
-      if (!mounted) return;
+      if (!mounted || _isCancelled) return;
 
       // Merge data with preference: OpenAlex > Grobid > Default
       _populateMetadataFields(grobidData, openalexData, summary);
@@ -453,6 +467,7 @@ class _MainScreenState extends State<MainScreen> {
           "content":
               "Hi! I have read the paper. What would you like to know about it?",
         });
+      }
     } catch (e) {
       if (statusText != 'Đã dừng trích xuất. Bạn có thể chọn file khác.') {
         setState(() => statusText = 'AI Error: $e');
@@ -465,14 +480,15 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _cancelExtraction() {
+    _isCancelled = true;
     if (_client != null) {
       _client!.close();
       _client = null;
-      setState(() {
-        isLoading = false;
-        statusText = 'Đã dừng trích xuất. Bạn có thể chọn file khác.';
-      });
     }
+    setState(() {
+      isLoading = false;
+      statusText = 'Đã dừng trích xuất. Bạn có thể chọn file khác.';
+    });
   }
 
   // =========================================================================
@@ -1401,7 +1417,6 @@ ${_summaryCtrl.text}
 
   void _showSettingsDialog(BuildContext context) {
     TextEditingController vCtrl = TextEditingController(text: vaultPath);
-    TextEditingController apiCtrl = TextEditingController(text: apiUrl);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1421,12 +1436,12 @@ ${_summaryCtrl.text}
                   prefixIcon: Icon(Icons.folder_outlined),
                 ),
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: apiCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Ollama API URL',
-                  prefixIcon: Icon(Icons.link),
+              const SizedBox(height: 12),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Note: Remote Ollama and local Grobid are configured in code.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ),
             ],
@@ -1441,7 +1456,6 @@ ${_summaryCtrl.text}
             onPressed: () {
               setState(() {
                 vaultPath = vCtrl.text;
-                apiUrl = apiCtrl.text;
               });
               _saveSettings();
               Navigator.pop(context);

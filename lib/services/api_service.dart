@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:xml/xml.dart' as xml;
 
 /// ResearchApiService handles all external API integrations for research document processing
@@ -8,13 +9,29 @@ import 'package:xml/xml.dart' as xml;
 class ResearchApiService {
   final String grobidUrl;
   final String ollamaUrl;
+  final String? ollamaUsername;
+  final String? ollamaPassword;
   final http.Client httpClient;
 
-  const ResearchApiService({
+  ResearchApiService({
     this.grobidUrl = 'http://localhost:8070',
-    this.ollamaUrl = 'http://localhost:11434',
+    this.ollamaUrl = 'http://109.237.69.169',
+    this.ollamaUsername = 'mtn_ai',
+    this.ollamaPassword = '130205',
     http.Client? httpClient,
-  }) : httpClient = httpClient ?? const http.Client();
+  }) : httpClient = httpClient ?? http.Client();
+
+  /// Helper method to create auth header for Ollama if credentials provided
+  Map<String, String> _getOllamaHeaders() {
+    final headers = {'Content-Type': 'application/json'};
+    if (ollamaUsername != null && ollamaPassword != null) {
+      final credentials = base64Encode(
+        utf8.encode('$ollamaUsername:$ollamaPassword'),
+      );
+      headers['Authorization'] = 'Basic $credentials';
+    }
+    return headers;
+  }
 
   // =========================================================================
   // 1. GROBID INTEGRATION - PDF Structure Parsing
@@ -30,16 +47,26 @@ class ResearchApiService {
         Uri.parse('$grobidUrl/api/processFulltextDocument'),
       );
 
-      // Add PDF file to request
+      // Add PDF file to request using bytes (more reliable across platforms)
+      final bytes = await pdfFile.readAsBytes();
       request.files.add(
-        await http.MultipartFile.fromPath('pdf', pdfFile.path),
+        http.MultipartFile.fromBytes(
+          'input',
+          bytes,
+          filename: pdfFile.uri.pathSegments.isNotEmpty
+              ? pdfFile.uri.pathSegments.last
+              : 'upload.pdf',
+          contentType: MediaType('application', 'pdf'),
+        ),
       );
 
       // Optional: Set processing options
       request.fields['consolidateHeader'] = '1';
       request.fields['consolidateMetadata'] = '1';
 
-      final streamedResponse = await httpClient.send(request).timeout(
+      final streamedResponse = await httpClient
+          .send(request)
+          .timeout(
             const Duration(seconds: 120),
             onTimeout: () => throw Exception(
               'Grobid processing timeout - server may be unavailable',
@@ -83,7 +110,9 @@ class ResearchApiService {
         'https://api.openalex.org/works?search=$encodedTitle&per-page=1',
       );
 
-      final response = await httpClient.get(url).timeout(
+      final response = await httpClient
+          .get(url)
+          .timeout(
             const Duration(seconds: 30),
             onTimeout: () => throw Exception('OpenAlex API timeout'),
           );
@@ -102,9 +131,7 @@ class ResearchApiService {
           'OpenAlex rate limit exceeded. Please try again in a moment.',
         );
       } else {
-        throw Exception(
-          'OpenAlex API error: ${response.statusCode}',
-        );
+        throw Exception('OpenAlex API error: ${response.statusCode}');
       }
     } on SocketException {
       throw Exception('Network error connecting to OpenAlex API');
@@ -128,9 +155,11 @@ class ResearchApiService {
         'title': work['title'] ?? '',
         'authors': authors.isNotEmpty ? authors : 'Not Given',
         'year': year.isNotEmpty ? year : 'Not Given',
-        'doi': work['doi']?.toString().replaceFirst('https://doi.org/', '') ??
+        'doi':
+            work['doi']?.toString().replaceFirst('https://doi.org/', '') ??
             'Not Given',
-        'venue': work['primary_location']?['source']?['display_name'] ??
+        'venue':
+            work['primary_location']?['source']?['display_name'] ??
             work['type'] ??
             'Not Given',
         'citedByCount': work['cited_by_count']?.toString() ?? '0',
@@ -166,7 +195,7 @@ class ResearchApiService {
       final response = await httpClient
           .post(
             Uri.parse('$ollamaUrl/api/chat'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _getOllamaHeaders(),
             body: jsonEncode({
               'model': model,
               'messages': [
@@ -175,7 +204,10 @@ class ResearchApiService {
                   'content':
                       'You are a research assistant. Provide a concise 2-3 sentence summary of the paper in English. Be specific about the main contribution.',
                 },
-                {'role': 'user', 'content': 'Summarize this paper: $limitedText'},
+                {
+                  'role': 'user',
+                  'content': 'Summarize this paper: $limitedText',
+                },
               ],
               'format': 'json',
               'stream': false,
@@ -189,8 +221,14 @@ class ResearchApiService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
-        final summary = jsonDecode(data['message']['content']);
-        return summary['summary'] ?? 'Not Given';
+        final content = data['message']['content'];
+        try {
+          final summaryMap = jsonDecode(content);
+          return summaryMap['summary'] ??
+              content; // Dùng summary nếu có, không thì lấy nguyên văn
+        } catch (e) {
+          return content; // Nếu AI trả về text thường, cứ lấy text đó
+        }
       } else {
         throw Exception('Ollama error: ${response.statusCode}');
       }
@@ -225,7 +263,7 @@ class ResearchApiService {
       final response = await httpClient
           .post(
             Uri.parse('$ollamaUrl/api/chat'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _getOllamaHeaders(),
             body: jsonEncode({
               'model': model,
               'messages': [
@@ -279,15 +317,11 @@ class ResearchApiService {
       String year = '';
 
       // Extract title
-      final titleElement = root
-          .findAllElements('titleStmt')
-          .expand((e) => e.findAllElements('title'))
-          .firstOrNull;
+      final titleElement = root.findAllElements('title').firstOrNull;
       title = titleElement?.text ?? '';
 
       // Extract authors (from bibl or analytic sections)
-      final authorElements =
-          root.findAllElements('author').toList();
+      final authorElements = root.findAllElements('author').toList();
       final authorNames = <String>[];
 
       for (var author in authorElements) {
@@ -298,20 +332,20 @@ class ResearchApiService {
           final surname =
               persName.findElements('surname').firstOrNull?.text ?? '';
           if (surname.isNotEmpty) {
-            authorNames.add('$surname${forename.isNotEmpty ? ', $forename' : ''}');
+            authorNames.add(
+              '$surname${forename.isNotEmpty ? ', $forename' : ''}',
+            );
           }
         }
       }
       authors = authorNames.join('; ');
 
       // Extract abstract
-      final abstractElement =
-          root.findAllElements('abstract').firstOrNull;
+      final abstractElement = root.findAllElements('abstract').firstOrNull;
       abstract = abstractElement?.text ?? '';
 
       // Extract keywords
-      final keywordElements =
-          root.findAllElements('term').toList();
+      final keywordElements = root.findAllElements('term').toList();
       keywords = keywordElements
           .map((e) => e.text)
           .where((k) => k.isNotEmpty)

@@ -22,7 +22,7 @@ flutter pub get
 ### Step 2: Start Grobid (Docker)
 ```bash
 # In your project root folder:
-docker-compose up -d grobid
+docker compose up -d grobid
 
 # Verify it's running:
 curl http://localhost:8070/api/isalive
